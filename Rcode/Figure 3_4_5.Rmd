@@ -1,0 +1,368 @@
+---
+title: "TME-microbiota analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Figure 3
+
+```{r}
+library(TCGAbiolinks)
+library(dplyr)
+library(DT)
+library(SummarizedExperiment)
+library(genefilter)
+library(GSVA)
+library(Biobase)
+library(stringr)
+library(ggplot2)
+library(ggpubr)
+library(reshape2)
+library(clusterProfiler)
+library(plyr)
+library(limma)
+library(biomaRt)
+library("SummarizedExperiment")
+
+setwd("~/Rdata")
+
+
+### Figure 3A
+
+id <- read.csv("NMF.HNSC.csv",header = T, sep = ',',row.names = 1)
+cells <- read_excel("metadatas.xlsx",sheet = 2, col_names = TRUE)
+rownames(cells) <- cells$ID
+cells <- as.data.frame(cells)[,-1]
+cell <- cells[rownames(id),]
+p1 <- pheatmap(t(cell[which(id$group == 1),]))
+p2 <- pheatmap(t(cell[which(id$group == 2),]))
+p3 <- pheatmap(t(cell[which(id$group == 3),]))
+c <- c(p1[["tree_col"]][["labels"]][p1[["tree_col"]][["order"]]], p2[["tree_col"]][["labels"]][p2[["tree_col"]][["order"]]], p3[["tree_col"]][["labels"]][p3[["tree_col"]][["order"]]])
+annotation_col  <- id[c,]$group
+annotation_col[which(annotation_col == 1)] <- "cluster1"
+annotation_col[which(annotation_col == 2)] <- "cluster2"
+annotation_col[which(annotation_col == 3)] <- "cluster3"
+annotation_col <- as.data.frame(annotation_col)
+rownames(annotation_col) <- c
+pheatmap(t(cell[c,]), cluster_cols = FALSE, show_colnames = FALSE,  annotation_col = annotation_col, cutree_rows = 3,  clustering_method = "ward.D",border_color = NA, color = colorRampPalette(c("navy", "white", "firebrick3"))(50))
+
+
+
+### Prepare TCGA dataset of HNSC
+
+rm(list=ls())
+
+query <- GDCquery(project = c("TCGA-HNSC"),
+                  data.category = "Transcriptome Profiling",
+                  data.type = "Gene Expression Quantification", 
+                  workflow.type = "HTSeq - FPKM")
+
+samplesDown <- getResults(query,cols=c("cases"))  
+
+dataSmTP <- TCGAquery_SampleTypes(barcode = samplesDown,
+                                  typesample = "TP")
+
+dataSmNT <- TCGAquery_SampleTypes(barcode = samplesDown,
+                                  typesample = "NT")
+
+
+queryDown <- GDCquery(project = c("TCGA-HNSC"), 
+                      data.category = "Transcriptome Profiling",
+                      data.type = "Gene Expression Quantification", 
+                      workflow.type = "HTSeq - FPKM", 
+                      barcode = c(dataSmTP, dataSmNT))
+
+dataPrep1 <- GDCprepare(query = queryDown, save = FALSE)
+dataPrep2 <- TCGAanalyze_Preprocessing(object = dataPrep1,
+                                       cor.cut = 0.6,
+                                       datatype = "HTSeq - FPKM")
+
+rownames(dataPrep2)<-rowData(dataPrep1)$external_gene_name
+dataNorm <- TCGAanalyze_Normalization(tabDF = dataPrep2,
+                                      geneInfo = geneInfo,
+                                      method = "gcContent")
+
+dataFilt <- TCGAanalyze_Filtering(tabDF = dataNorm,
+                                  method = "quantile", 
+                                    qnt.cut =  0.1)
+
+TPMs <- dataFilt
+colnames(TPMs) <- sapply(strsplit(colnames(TPMs),'-'),function(x) paste0(x[1:3],collapse="-"))
+TP <- TPMs
+
+
+
+### Figure 3B
+
+name <- c("PD-L1","PD-L2","PD-1","CD86","CTLA-4","Tim-3","LAG-3","4-1BB","TIGIT","B7-H3","IDO")
+gene <- as.data.frame(t(TPMs[c("CD274","PDCD1LG2","PDCD1","CD86","CTLA4","HAVCR2","LAG3","TNFRSF9","TIGIT","CD276","IDO1"), intersect(colnames(TPMs), rownames(gsva_matrix))]))
+colnames(gene) <- name
+
+gsva <- gsva_matrix[intersect(colnames(TPMs), rownames(gsva_matrix)),]
+gene1 <- gene[rownames(gsva),]
+gene1$group <- gsva$group
+
+gene1$group[which(gene1$group == 1)] <- "cluster1"
+gene1$group[which(gene1$group == 2)] <- "cluster2"
+gene1$group[which(gene1$group == 3)] <- "cluster3"
+
+data <- melt(gene1)
+my_comparisons <- list(c("cluster1","cluster2"),c("cluster2","cluster3"),c("cluster1","cluster3") )
+ ggplot(data=data, aes(x=group, y=log10(value+1)))+
+    theme_classic()+
+    geom_boxplot()+ 
+    geom_jitter(aes(color=group), width=0.2, size=1)+
+    scale_color_manual(values=c("#f8766d", "#00ba38", "#619cff"))+
+    theme(axis.text.x = element_text(size=14,angle=0),axis.text.y = element_text(size=14)) + 
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+    theme(legend.title = element_text(size=18))+ 
+    theme(legend.text=element_text(size=14)) +
+    theme(title=element_text(size=18))+
+    theme(plot.title = element_text(hjust = 0.5))+
+    labs(y="Reads count (log10)")+
+    stat_compare_means(comparisons = my_comparisons, ref.group = ".all.", color="black")+
+    theme(legend.position='none')+
+    facet_wrap(.~variable, nrow = 1)+
+    theme(strip.text = element_text(colour = 'black', face = 'bold', size = rel(1.2)), strip.background = element_rect(fill = 'white', colour = 'black', size = rel(2), linetype = 1))+
+    xlab(NULL)
+
+
+ 
+### Figure 3C
+ 
+gsva_matrix <- read.csv("NMF.HNSC.csv",header = T, sep = ',',row.names = 1)
+virus <- read.csv("virus.tcga.csv",header = T, sep = ',',row.names = 1)
+gsva <-  gsva_matrix[intersect(rownames(gsva_matrix), virus$id),]
+virus1 <-  subset(virus, id %in% intersect(rownames(gsva_matrix), virus$id))
+rownames(virus1) <- virus1$id
+virus2 <- virus1[,-c(1,2)]
+virus2 <- virus2[rownames(gsva),]
+virus2$group <- gsva$group
+virus2$group[which(virus2$group == 1)] <- "cluster1"
+virus2$group[which(virus2$group == 2)] <- "cluster2"
+virus2$group[which(virus2$group == 3)] <- "cluster3"
+virus2$HHV <- rowSums(virus2[,4:7])
+virus3 <- na.omit(virus2)
+n0 <- apply(virus3 == 0, 2, sum)
+virus4 <- virus3[,which(n0 < 480)]
+Virus5 <- virus4[,c("group", "HPV", "HPV16", "HPV18", "HPV33", "HPV35", "HHV", "HHV1", "HHV4", "HHV5", "HHV6", "HBV")]
+ 
+test <- Virus5
+test[,-1][test[,-1] > 100] = "Positive"
+test[,-1][test[,-1] != "Positive"] = "Negative"
+
+dat <- melt(test, id = "group")
+
+ggplot() + geom_bar(data = dat, aes(x = group, fill = value), position  = "fill")+
+    theme_classic()+
+    facet_wrap(.~variable, nrow = 1)+
+    theme(strip.text = element_text(colour = 'black', face = 'bold', size = rel(1.2)), strip.background = element_rect(fill = 'white', colour = 'black', size = rel(2), linetype = 1))+
+    xlab(NULL)
+
+### Figure 3D
+
+setwd("~/Rdata")
+load("HNSC.gene.sp.Rdata")
+load("26gene.22sp.Rdata")
+species <- data[[2]]
+meta <- datas[[3]]
+inter1 <- intersect(meta$sample.bcr_patient_barcode, rownames(gene1))
+inter <- intersect(inter1, rownames(Virus5))
+
+meta1 <- subset(meta, sample.bcr_patient_barcode %in% inter)
+sp <- species[rownames(meta1),]
+ge <- gene1[as.character(meta1$sample.bcr_patient_barcode), -12]
+
+
+ids <- read_excel("metadatas.xlsx",sheet = 2, col_names = TRUE)
+rownames(ids) <- ids$ID
+ce  <- as.data.frame(ids)[as.character(meta1$sample.bcr_patient_barcode),-1]
+
+vi <- Virus5[as.character(meta1$sample.bcr_patient_barcode),-1]
+
+data <- cbind(sp,vi,ge,ce)
+
+dat <- corr.test(data,method = "spearman")
+# send the data to cytoscape
+
+
+### Figure 3E
+
+gsva_matrix <- read.csv("NMF.HNSC.csv",header = T, sep = ',',row.names = 1)
+gsva <- gsva_matrix[intersect(colnames(TPMs), rownames(gsva_matrix)), ]
+
+exp<-log2(TP+1)
+
+mat1 <- exp[,rownames(gsva)[gsva$group == "3"]]
+colnames(mat1) <- colnames(dataPrep2)[which(colnames(TP) %in% colnames(mat1))]
+
+mat2 <- exp[,rownames(gsva)[gsva$group == "2"]]
+colnames(mat2) <- colnames(dataPrep2)[which(colnames(TP) %in% colnames(mat2))]
+
+Data_DEGs <- TCGAanalyze_DEA(mat1 = mat1,
+                             mat2 = mat2,
+                             Cond1type = "cluster3",
+                             Cond2type = "cluster2",
+                             pipeline="limma",
+                             voom = TRUE,
+                             contrast.formula = "Mycontrast=cluster3-cluster2")
+
+
+EnhancedVolcano(Data_DEGs,
+                lab = rownames(Data_DEGs),
+                x = 'logFC',
+                y = 'P.Value',
+                xlab = bquote(~Log[2]~ 'fold change'),
+                pCutoff = 0.05,
+                FCcutoff = 1.0,
+                pointSize = 3.0,
+                labSize = 6.0,
+                colAlpha = 1,
+                legendPosition = 'right',
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 0.75)
+
+### Figure 3F and Supplemental Figure 2B were performed with STRING and MCODE in Cytoscape.
+### Supplemental Figure 2A was analyzed with Metascape (https://metascape.org/gp/index.html#/main/step1)
+
+```
+
+
+## Figure 4
+
+```{r}
+### Figure 4A
+
+load("HNSC.gene.sp.Rdata")
+gene <- datas[[1]]
+species <- datas[[2]]
+meta <- datas[[3]]
+
+ge <- gene[,c("CD79A",	"TNFRSF17",	"CCL19",	"CD79B",	"PTGDS",	"PTN",	"CCR7",	"NTS",	"CD48",	"CX3CL1",	"FAM3B",	"BMP7",	"SEMA4D",	"TNFRSF13C",	"LTF",	"S100A3",	"IL24",	"IL1RL2",	"PGLYRP4",	"IL1B",	"RAET1G",	"RAET1E",	"S100A7A",	"CSF2",	"APLN",	"VEGFC",	"INHBA",	"RNASE7",	"NRG1",	"EREG")]
+sp <- species[, c("Fusobacterium sp. oral taxon 370",	"Fusobacterium periodonticum",	"Fusobacterium sp. CM21",	"Fusobacterium sp. OBRC1",	"Fusobacterium nucleatum",	"Fusobacterium sp. HMSC064B11",	"Fusobacterium hwasookii",	"Fusobacterium sp. HMSC065F01",	"Fusobacterium sp. CM22",	"Fusobacterium sp. HMSC064B12",	"Fusobacterium sp. CM1",	"Porphyromonas endodontalis",	"Lachnoanaerobaculum sp. MSX33",	"Peptostreptococcus stomatis",	"Campylobacter rectus",	"Filifactor alocis",	"Lachnoanaerobaculum sp. ICM7", "Catonella morbi",	"Treponema denticola")]
+
+dat <- corr.test(sp, ge,method = "spearman")
+# send the data to cytoscape
+
+
+
+### Figure 4B
+
+Data <- Data_DEGs[ge,]
+Data$name <- rownames(Data)
+Data$group <- Data$logFC
+Data$group[which(Data$group < 0 )] = "down"
+Data$group[which(Data$group != "down" )] = "up"
+
+ggbarplot(Data, x="name", y="logFC", fill = "group", 
+          color = "white", palette = "jco", sort.val = "logFC",
+          sort.by.groups = FALSE, x.text.angle=90, ylab = "Fold Change (log2)", 
+          xlab = FALSE, legend.title="")
+
+### Figure 4C was performed with cBioPortal (https://www.cbioportal.org/)
+
+```
+
+
+## Figure 5
+
+```{r}
+
+### Figure 5A
+
+setwd("~/Rdata")
+load("data.Rdata")
+library(GDCRNATools)
+deLNC <- data[[1]]
+dePC <- data[[2]]
+rnaExpr <- data[[3]]
+mirExpr <- data[[4]]
+
+meta <- gsva_matrix[intersect(rownames(gsva_matrix), colnames(rnaExpr)),]
+meta$group[which(meta$group == 2)] <- "cluster2"
+meta$group[which(meta$group == 3)] <- "cluster3"
+DEGAll <- gdcDEAnalysis(counts     = rnaExpr, 
+                        group      = meta$group, 
+                        comparison = 'cluster3-cluster2', 
+                        method     = 'limma');dim(DEGAll)
+DAT <- subset(DEGAll, group == "long_non_coding")
+EnhancedVolcano(DAT,
+                lab = DAT$symbol,
+                x = 'logFC',
+                y = 'PValue',
+                xlab = bquote(~Log[2]~ 'fold change'),
+                pCutoff = 0.05,
+                FCcutoff = 1.0,
+                pointSize = 3.0,
+                labSize = 6.0,
+                colAlpha = 1,
+                legendPosition = 'right',
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 0.75)
+
+ceOutput <- gdcCEAnalysis(lnc         = rownames(deLNC), 
+                          pc          = rownames(dePC), 
+                          lnc.targets = 'starBase', 
+                          pc.targets  = 'starBase', 
+                          rna.expr    = rnaExpr, 
+                          mir.expr    = mirExpr)
+
+### Figure 5B
+
+setwd("~/Rdata")
+WGS <- readRDS("physeq.WGS.solid.file.reads.rds")
+genus = tax_glom(WGS, "genus")
+meta <- meta(WGS)
+names <- intersect(colnames(rnaExpr), meta$sample.bcr_patient_barcode)
+meta1 <- subset(meta, sample.bcr_patient_barcode %in% names)
+otu <- genus@otu_table@.Data
+rownames(otu) <- as.data.frame(genus@tax_table@.Data)$genus
+
+id <- subset(DEGAll, symbol %in% c("LINC00707", "EREG"))
+dat <- as.data.frame(t(rnaExpr[rownames(id), as.character(meta1$sample.bcr_patient_barcode)]))
+colnames(dat) <- c("EREG","LINC00707")
+dat$Fuso <- otu["Fusobacterium", rownames(meta1)]
+
+
+ggplot(data=dat, aes(x = log10(Fuso), y = LINC00707)) +
+    geom_point(alpha=0.6, color="black",size=2)+ 
+    geom_smooth(method=lm, size=2, color="black")+ 
+    labs(y= "LINC00707 (FPKM)", x="Fusobacterium (log10PKM)")+
+    theme(axis.text.x = element_text(size=12),axis.text.y = element_text(size=12)) +
+    theme(legend.title = element_blank())+ 
+    theme(title=element_text(size=14,color="#4F4F4F"))+
+    theme(legend.position="none")+
+    theme_classic()+
+    theme(axis.text.x = element_text(size=14),axis.text.y = element_text(size=14)) + 
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+    theme(legend.title = element_blank())+ 
+    stat_cor(data=dat, method = "spearman", color="black")
+
+
+ggplot(data=dat, aes(x = EREG, y = LINC00707)) +
+    geom_point(alpha=0.6, color="black",size=2)+ 
+    geom_smooth(method=lm, size=2, color="black")+ 
+    labs(y= "LINC00707 (FPKM)", x="EREG (FPKM)")+
+    theme(axis.text.x = element_text(size=12),axis.text.y = element_text(size=12)) +
+    theme(legend.title = element_blank())+ 
+    theme(title=element_text(size=14,color="#4F4F4F"))+
+    theme(legend.position="none")+
+    theme_classic()+
+    theme(axis.text.x = element_text(size=14),axis.text.y = element_text(size=14)) + 
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+    theme(legend.title = element_blank())+ 
+    stat_cor(data=dat, method = "spearman", color="black")
+
+
+### Figure 5C was performed with GEPIA2 (http://gepia2.cancer-pku.cn/) and LnCeCell (http://bio-bigdata.hrbmu.edu.cn/LnCeCell/)
+### Figure 5C was performed with UCSC Xena (http://xena.ucsc.edu/)
+
+
+```

@@ -1,0 +1,222 @@
+---
+title: "TME-microbiota analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Figure 1
+
+```{r}
+
+setwd("~/Rdata")
+
+library(vegan)
+library(picante)
+library(phyloseq)
+library(plyr)
+library(ggplot2)
+library(reshape2)
+library(patchwork) 
+library(cowplot)
+library(ggpubr) 
+library(GUniFrac)
+library(microbiome)
+library(amplicon)
+library(statnet)
+library(circlize)
+library(limma)
+library(EnhancedVolcano)
+library(DEFormats)
+library(edgeR)
+
+
+
+### load data
+
+WGS <- readRDS("physeq.WGS.solid.file.reads.rds")
+meta <- meta(WGS)
+wgs <- WGS
+
+
+
+### Figure 1A
+
+phylum.p = tax_glom(wgs, "phylum")
+otus <- as.data.frame(phylum.p@otu_table@.Data)
+tax <- as.data.frame(phylum.p@tax_table@.Data)
+tax1 <- tax[!duplicated(tax$phylum),]
+otus1 <- otus[rownames(tax1),]
+rownames(otus1) <- tax1$phylum
+otus <- as.data.frame(t(otus1))
+meta <- meta(wgs)
+circos.clear()
+tax_circlize(tax_sum=t(otus), meta, groupID="case.acronym")
+
+
+
+### Figure 1B
+
+meta$rpm <- colSums(wgs@otu_table@.Data)
+meta$case.acronym<- factor(meta$case.acronym, levels = c("HNSC", "ESCA", "STAD", "COAD" , "READ"))
+my_comparisons <- list(c("PT","STN"))
+p1 <- ggplot(data=meta, aes(x=aliquot.Sample, y=log10(rpm)))+
+    theme_classic()+
+    geom_boxplot()+ 
+    geom_jitter(aes(color=aliquot.Sample), width=0.2, size=2)+
+    scale_color_manual(values=c("#184F92", "#845B9C"))+
+    theme(axis.text.x = element_text(size=14,angle=0),axis.text.y = element_text(size=14)) + 
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+    theme(legend.title = element_text(size=18))+ 
+    theme(legend.text=element_text(size=14)) +
+    theme(title=element_text(size=18))+
+    theme(plot.title = element_text(hjust = 0.5))+
+    labs(y="Abundance (log10 RPM)")+
+    stat_compare_means(comparisons = my_comparisons, ref.group = ".all.", color="black")+
+    theme(legend.position='none')+
+    facet_wrap(.~case.acronym, nrow = 1)+
+    theme(strip.text = element_text(colour = 'black', face = 'bold', size = rel(1.2)), strip.background = element_rect(fill = 'white', colour = 'black', size = rel(2), linetype = 1))+
+    xlab(NULL)
+
+
+all.shannon <- plot_richness(wgs, "aliquot.Sample", measures= c("Shannon"))
+all.shannon$data$case.acronym<- factor(all.shannon$data$case.acronym, levels = c("HNSC", "ESCA", "STAD", "COAD" , "READ"))
+my_comparisons <- list(c("PT","STN"))
+p2 <- ggplot(data=all.shannon$data, aes(x=aliquot.Sample, y=value))+
+    theme_classic()+
+    geom_boxplot()+ 
+    geom_jitter(aes(color=aliquot.Sample), width=0.2, size=2)+
+    scale_color_manual(values=c("#184F92", "#845B9C"))+
+    theme(axis.text.x = element_text(size=14,angle=0),axis.text.y = element_text(size=14)) + 
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+    theme(legend.title = element_text(size=18))+ 
+    theme(legend.text=element_text(size=14)) +
+    theme(title=element_text(size=18))+
+    theme(plot.title = element_text(hjust = 0.5))+
+    labs(y="Shannon-index")+
+    stat_compare_means(comparisons = my_comparisons, ref.group = ".all.",  color="black")+
+    theme(legend.position='none')+
+    facet_wrap(.~case.acronym, nrow = 1)+
+    theme(strip.text = element_text(colour = 'black', face = 'bold', size = rel(1.2)), strip.background = element_rect(fill = 'white', colour = 'black', size = rel(2), linetype = 1))+
+    xlab(NULL)
+
+
+
+### Figure 1C
+
+sample_data(WGS)$rpm <- meta$rpm
+sub_wgs<- subset_samples(WGS, rpm != 0)
+sub_wgs.p<-  prune_taxa(taxa_sums(sub_wgs) > 0, sub_wgs)
+
+clr <- compositions::clr(t(sub_wgs.p@otu_table@.Data+0.000000001))
+clr1 <- t(clr)
+clrs <- sub_wgs.p
+clrs@otu_table@.Data <- as.matrix(clr1)
+
+GP.ord <- ordinate(clrs, "PCoA", "bray", na.rm = TRUE)
+data1<- plot_ordination(clrs, GP.ord, type="samples", color="aliquot.Sample")
+data.all <- data1$data
+
+data.all$case.acronym<- factor(data.all$case.acronym, levels = c("HNSC", "ESCA", "STAD", "COAD" , "READ"))
+
+p3 <- ggscatter(data.all, x= "Axis.1", y = "Axis.2", 
+          color = "aliquot.Sample", palette = c("#184F92", "#845B9C"),shape = "case.acronym", 
+          size = 2, alpha = 0.35,
+          ellipse = FALSE, 
+          mean.point = TRUE, 
+          star.plot = FALSE, 
+          ellipse.level = 0.3,
+          ggtheme = theme_minimal()) +
+    scale_shape_manual(values = c( 15, 19, 17, 18, 8))+
+    xlab(data1[["labels"]][["x"]]) + ylab(data1[["labels"]][["y"]])+
+    theme(panel.grid = element_line(color = 'gray', linetype = 2, size = 0.1), panel.background = element_rect(color = 'black', fill = 'transparent'), legend.key = element_rect(fill = 'transparent')) + #去掉背景框
+    geom_vline(xintercept = 0, color = 'gray', size = 0.4) + 
+    geom_hline(yintercept = 0, color = 'gray', size = 0.4) + 
+    theme(axis.text.x = element_text(size=14),axis.text.y = element_text(size=14)) + 
+    labs(title="PCoA based Bray-curtis distances")+
+    theme(plot.title = element_text(hjust = 0.5))+ 
+    theme(legend.title = element_blank(),legend.text = element_text(colour="#4F4F4F", size = 14))
+
+
+per <-  matrix(0, 5, 2)
+rownames(per) <- c("HNSC", "ESCA", "STAD", "COAD" , "READ")
+colnames(per) <- c("R2", "p")
+
+for (i in c("HNSC", "ESCA", "STAD", "COAD" , "READ"))
+{
+    hnsc <- subset_samples(clrs, case.acronym %in% i)
+    dis_bray <- phyloseq::distance(hnsc , "bray")
+    metas <- meta(hnsc)$aliquot.Sample
+    set.seed(002)
+    adon.results<-adonis(dis_bray~metas, perm=999)
+    per[i,] <- c(adon.results[["aov.tab"]][["R2"]][1], adon.results[["aov.tab"]][["Pr(>F)"]][1])
+}
+
+per <- as.data.frame(per)
+per$group <- rownames(per)
+per$group <- factor(per$group, levels = c("HNSC", "ESCA", "STAD", "COAD" , "READ"))
+p4 <- ggplot(per, aes(group, R2))+
+    geom_col()+
+    theme_classic()+
+    theme(axis.text.x = element_text(size=14,angle=45),axis.text.y = element_text(size=14)) + 
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+    theme(legend.title = element_text(size=18))+ 
+    theme(legend.text=element_text(size=14)) +
+    theme(title=element_text(size=18))+
+    theme(plot.title = element_text(hjust = 0.5))+
+    labs(y="PERMANOVA (R2)")+
+    xlab(NULL)
+  
+  
+(p1 + p3 + plot_layout(nrow = 1, widths = c(2, 1))) / (p2 + p4 + plot_layout(nrow = 1, widths = c(2, 1)))
+
+
+
+### Figure 1D
+
+sample_data(wgs)$rpm <- meta$rpm
+sub_wgs<- subset_samples(wgs, rpm != 0)
+genus.p = tax_glom(sub_wgs, "genus")
+genus.p<-  prune_taxa(taxa_sums(genus.p) > 0, genus.p)
+
+for (i in c("HNSC", "ESCA", "STAD", "COAD" , "READ"))
+{
+wxs.p <- subset_samples(genus.p, case.acronym == i)
+wxs.p <- filter_taxa(wxs.p, function(x) sum(x > 0) > (0.05*length(x)), TRUE)
+sample_data(wxs.p)$sample.sample_type <- factor(sample_data(wxs.p)$sample.sample_type, levels = c("Primary Tumor", "Solid Tissue Normal"))
+tax <- as.data.frame(wxs.p @tax_table@.Data)
+dds <- phyloseq_to_deseq2(wxs.p, ~ sample.sample_type)     
+dge <- as.DGEList(dds)
+dge <- calcNormFactors(dge, method = "TMM")
+head(dge$samples$norm.factors)
+mm <- model.matrix(~ group, dge$samples)
+y <- voom(dge, mm, plot = T)
+fit <- lmFit(y, mm)                                  
+fit <- eBayes(fit)
+head(coef(fit))
+limma_res_df <- data.frame(topTable(fit, coef = "groupSolid Tissue Normal", number = Inf))    
+rownames(limma_res_df) <- tax[rownames(limma_res_df) ,]$genus
+
+EnhancedVolcano(limma_res_df,
+                lab = rownames(limma_res_df),
+                x = 'logFC',
+                y = 'P.Value',
+                xlab = bquote(~Log[2]~ 'fold change'),
+                pCutoff = 0.05,
+                FCcutoff = 1.5,
+                pointSize = 3.0,
+                labSize = 6.0,
+                colAlpha = 1,
+                legendPosition = 'right',
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 0.75)
+}
+
+
+### Figure 1E 
+### The differential bacterial results were extracted and then visualized with TBtools.
+```

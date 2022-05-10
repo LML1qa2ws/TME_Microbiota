@@ -1,0 +1,418 @@
+---
+title: "TME-microbiota analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Figure 2
+
+```{r}
+setwd("~/Rdata")
+
+library(vegan)
+library(picante)
+library(phyloseq)
+library(plyr)
+library(ggplot2)
+library(reshape2)
+library(patchwork) 
+library(cowplot)
+library(ggpubr)
+library(GUniFrac)
+library(microbiome)
+library(readxl)
+library(NMF)
+library(survival)
+library(survminer)
+library(limma)
+library(EnhancedVolcano)
+library(DEFormats)
+library(edgeR)
+
+### Figure 2A
+WGS <- readRDS("physeq.WGS.solid.file.reads.rds")
+meta <- meta(WGS)
+wgs <- WGS
+meta <- meta(wgs)
+meta$reads <- colSums(wgs@otu_table@.Data)
+sample_data(wgs)$reads <- meta$reads
+sub_wgs<- subset_samples(wgs, reads != 0)
+sub_wgs.p<-  prune_taxa(taxa_sums(sub_wgs) > 0, sub_wgs)
+
+ids <- read_excel("metadatas.xlsx",sheet = 3, col_names = TRUE)
+rownames(ids) <- ids$ID
+ids  <- as.data.frame(ids)[,-1]
+meta <- meta(sub_wgs.p)
+sub_meta <- meta[,ids]
+
+metas <-  read_excel("metadatas.xlsx",sheet = 1, col_names = TRUE)
+rownames(metas) <- metas$ID
+metas  <- as.data.frame(metas)[,-1]
+sub_metas <- metas[as.character(sub_meta$sample.bcr_patient_barcode), c(7, 8, 14:19, 21, 23,33)]
+metadata <- cbind(sub_meta[,-11], sub_metas)
+
+metadata$reads <- meta$reads
+all.shannon <- plot_richness(wgs, "aliquot.Sample", measures= c("Shannon"))
+shannon <- all.shannon$data
+rownames(shannon) <- shannon$analysis.id
+metadata$shannon <- shannon[rownames(sub_meta),]$value
+
+names <- colnames(metadata)[c(5:6,11:16,21)]
+
+COAD <-  matrix(0, 9, 2)
+
+for (i in 1:9)
+{
+    metadata$names <- as.factor(metadata[, names[i]])
+    test <- subset(metadata, case.acronym == "HNSC" & sample.sample_type == "Primary Tumor" & names != "NA") 
+    data <- kruskal.test(test$reads ~ test[,names[i]])
+    COAD[i,] <- c(data[["statistic"]][["Kruskal-Wallis chi-squared"]], data[["p.value"]])
+}
+
+data1 <- COAD
+
+COAD <-  matrix(0, 9, 2)
+
+for (i in 1:9)
+{
+     metadata$names <- as.factor(metadata[, names[i]])
+    test <- subset(metadata, case.acronym == "ESCA" & sample.sample_type == "Primary Tumor" & names != "NA") 
+    data <- kruskal.test(test$reads ~ test[,names[i]])
+    COAD[i,] <- c(data[["statistic"]][["Kruskal-Wallis chi-squared"]], data[["p.value"]])
+}
+
+data2 <- COAD
+
+COAD <-  matrix(0, 9, 2)
+
+for (i in 1:9)
+{
+     metadata$names <- as.factor(metadata[, names[i]])
+    test <- subset(metadata, case.acronym == "STAD" & sample.sample_type == "Primary Tumor" & names != "NA") 
+    data <- kruskal.test(test$reads ~ test[,names[i]])
+    COAD[i,] <- c(data[["statistic"]][["Kruskal-Wallis chi-squared"]], data[["p.value"]])
+}
+
+data3 <- COAD
+
+COAD <-  matrix(0, 9, 2)
+
+for (i in 1:9)
+{
+     metadata$names <- as.factor(metadata[, names[i]])
+    test <- subset(metadata, case.acronym == "COAD" & sample.sample_type == "Primary Tumor" & names != "NA") 
+    data <- kruskal.test(test$reads ~ test[,names[i]])
+    COAD[i,] <- c(data[["statistic"]][["Kruskal-Wallis chi-squared"]], data[["p.value"]])
+}
+
+data4 <- COAD
+
+COAD <-  matrix(0, 9, 2)
+
+for (i in 1:9)
+{
+    metadata$names <- as.factor(metadata[, names[i]])
+    test <- subset(metadata, case.acronym == "READ" & sample.sample_type == "Primary Tumor" & names != "NA") 
+    data <- kruskal.test(test$reads ~ test[,names[i]])
+    COAD[i,] <- c(data[["statistic"]][["Kruskal-Wallis chi-squared"]], data[["p.value"]])
+}
+
+data5 <- COAD
+
+ch <- cbind(data1[,1],data2[,1],data3[,1],data4[,1],data5[,1])
+p <- cbind(data1[,2],data2[,2],data3[,2],data4[,2],data5[,2])
+
+rownames(ch) <- names
+colnames(ch) <- c("HNSC", "ESCA", "STAD", "COAD" , "READ")
+rownames(p) <- names
+colnames(p) <- c("HNSC", "ESCA", "STAD", "COAD" , "READ")
+
+ch <- t(ch[c(1,9,2:8),])
+p <- t(p[c(1,9,2:8),])
+
+ch[which(ch >10)] <- 10
+p[which(p==0)] <- 1
+
+pheatmap(ch, cluster_rows = FALSE, border_color = "white", color = colorRampPalette(c("navy", "white", "firebrick3"))(50), cluster_cols = FALSE, display_numbers = matrix(ifelse(p < 0.05, "*", ""), nrow(ch)))
+
+
+data <- metadata[rownames(metadata)[which(metadata$case.acronym == "HNSC")],c(3,7,8:10, 17:20, 22)]
+data <- data[,c(5,4,6,7,1:3,8:10)]
+test <- corr.test(data[,c(1:9)],data[,10],method = "spearman")
+r1 <- test$r
+p1 <- test$p
+
+data <- metadata[rownames(metadata)[which(metadata$case.acronym == "ESCA")],c(3,7,8:10, 17:20, 22)]
+data <- data[,c(5,4,6,7,1:3,8:10)]
+test <- corr.test(data[,c(1:9)],data[,10],method = "spearman")
+r2 <- test$r
+p2 <- test$p
+
+data <- metadata[rownames(metadata)[which(metadata$case.acronym == "STAD")],c(3,7,8:10, 17:20, 22)]
+data <- data[,c(5,4,6,7,1:3,8:10)]
+test <- corr.test(data[,c(1:9)],data[,10],method = "spearman")
+r3 <- test$r
+p3 <- test$p
+
+data <- metadata[rownames(metadata)[which(metadata$case.acronym == "COAD")],c(3,7,8:10, 17:20, 22)]
+data <- data[,c(5,4,6,7,1:3,8:10)]
+test <- corr.test(data[,c(1:9)],data[,10],method = "spearman")
+r4 <- test$r
+p4 <- test$p
+
+data <- metadata[rownames(metadata)[which(metadata$case.acronym == "READ")],c(3,7,8:10, 17:20, 22)]
+data <- data[,c(5,4,6,7,1:3,8:10)]
+test <- corr.test(data[,c(1:9)],data[,10],method = "spearman")
+r5 <- test$r
+p5 <- test$p
+
+ch <- cbind(r1,r2,r3,r4,r5)
+p <- cbind(p1,p2,p3,p4,p5)
+
+colnames(ch) <- c("HNSC", "ESCA", "STAD", "COAD" , "READ")
+colnames(p) <- c("HNSC", "ESCA", "STAD", "COAD" , "READ")
+
+ch <- t(ch)
+p <- t(p)
+
+ch[which(ch == "1")] <- NA
+
+pheatmap(ch, cluster_rows = FALSE, border_color = "white", color = colorRampPalette(c("navy", "white", "firebrick3"))(50), cluster_cols = FALSE, display_numbers = matrix(ifelse(p < 0.05, "*", ""), nrow(ch)))
+
+
+# adonis
+
+names <- colnames(metadata)[c(5:6,11:16,21)]
+COAD <-  matrix(0, 9, 2)
+
+for (i in 1:9)
+{
+    metadata$names <- as.factor(metadata[, names[i]])
+    test <- subset(metadata, case.acronym == "HNSC" & sample.sample_type == "Primary Tumor" & names != "NA") 
+    sample_data(sub_wgs.p)$human <- metadata$names
+    physeq <- subset_samples(sub_wgs.p, case.acronym == "HNSC" & sample.sample_type == "Primary Tumor" & human != "NA")
+    dis_bray.f<- phyloseq::distance(physeq, "bray")
+    set.seed(002)
+    adon.results<-adonis(dis_bray.f~test[,names[i]], perm=999)
+    COAD[i,] <- c(adon.results[["aov.tab"]][["R2"]][1], adon.results[["aov.tab"]][["Pr(>F)"]][1])
+}
+
+
+# mantel test
+
+data <-  metadata[,c(1,2,3,7,8:10, 17:20, 22)]
+names <- colnames(data)
+COAD <-  matrix(0, 12, 2)
+for (i in c(3:11))
+{
+    data <-  metadata[,c(1,2,3,7,8:10, 17:20, 22)]
+    data$names <- data[, names[i]]
+    env <- subset(data, case.acronym == "HNSC" & sample.sample_type == "Primary Tumor" & names != "NA") 
+    
+    sample_data(sub_wgs.p)$human <- data$names
+    physeq <- subset_samples(sub_wgs.p, case.acronym == "HNSC" & sample.sample_type == "Primary Tumor" & human != "NA")
+    otu <- t(physeq@otu_table@.Data)
+    species.distance <- vegdist(otu, method = 'bray')
+    
+    dd <- mantel(species.distance, vegdist(as.numeric(env$names), method = "euclidean"),  method = "spearman", permutations = 999, na.rm = TRUE)
+    COAD[i,] <- c(dd$statistic, dd$signif)
+}
+
+
+
+### Figure 2B & Figure S1
+### NMF cluster
+id <- read.csv("NMF.HNSC.csv",header = T, sep = ',',row.names = 1)
+
+cells <- read_excel("metadatas.xlsx",sheet = 2, col_names = TRUE)
+rownames(cells) <- cells$ID
+cells <- as.data.frame(cells)[,-1]
+
+cell <- cells[rownames(id),]
+
+cell1 <- 10^(cell)
+hnsc.log2fpkm.enengy <- as.data.frame(t(cell1))
+ranks <- 2:10
+estim.hnsc <- nmf(hnsc.log2fpkm.enengy,ranks, nrun=50, 
+                  method = "lee")
+duplicated(colnames(hnsc.log2fpkm.enengy))
+
+plot(estim.hnsc)
+
+seed = 2020820
+nmf.rank4 <- nmf(hnsc.log2fpkm.enengy, 
+                 rank = 3, 
+                 nrun=50,
+                 seed = seed, 
+                 method = "lee")
+
+jco <- c("#2874C5","#EABF00","#C6524A","#868686")
+index <- extractFeatures(nmf.rank4,"max") 
+sig.order <- unlist(index)
+NMF.Exp.rank4 <- hnsc.log2fpkm.enengy[sig.order,]
+NMF.Exp.rank4 <- na.omit(NMF.Exp.rank4) 
+group <- predict(nmf.rank4) 
+table(group)
+consensusmap(nmf.rank4,
+             labRow = NA,
+             labCol = NA,
+             annCol = data.frame("cluster"=group[colnames(NMF.Exp.rank4)]),
+             annColors = list(cluster=c("1"=jco[1],"2"=jco[2],"3"=jco[3],"4"=jco[4])))
+ 
+### Figure 2C
+
+id$group <- group
+fit <- survfit(Surv(OS, OS_FLAG)~group, data=id) 
+surv_pvalue(fit)$pval.txt
+ggsurvplot(fit,pval=TRUE)
+
+
+
+### Figure 2D
+
+metadata$id <- sub_meta$sample.bcr_patient_barcode
+names <- as.character(intersect(metadata$id, rownames(id)))
+metadata1 <- subset(metadata, id %in%  names & sample.sample_type == "Primary Tumor")
+id1 <- id[as.character(metadata1$id),]
+metadata1$group <- as.numeric(id1$group)
+metadata1$group[which(metadata1$group == 1)] <- "cluster1"
+metadata1$group[which(metadata1$group == 2)] <- "cluster2"
+metadata1$group[which(metadata1$group == 3)] <- "cluster3"
+my_comparisons <- list(c("cluster1","cluster2"),c("cluster2","cluster3"),c("cluster1","cluster3"))
+
+ggplot(data=metadata1, aes(x=group, y=log10(reads)))+
+    theme_classic()+
+    geom_boxplot()+ 
+    geom_jitter(aes(color=group), width=0.2, size=2)+
+    scale_color_manual(values=c("#f8766d", "#00ba38", "#619cff"))+
+    theme(axis.text.x = element_text(size=14,angle=0),axis.text.y = element_text(size=14)) + 
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+    theme(legend.title = element_text(size=18))+ 
+    theme(legend.text=element_text(size=14)) +
+    theme(title=element_text(size=18))+
+    theme(plot.title = element_text(hjust = 0.5))+
+    labs(y="Abundance (log10 RPM)")+
+    stat_compare_means(comparisons = my_comparisons, ref.group = ".all.", color="black")+
+    theme(legend.position='none')+
+    xlab(NULL)
+
+### Figure 2E
+
+ggplot(data=metadata1, aes(x=group, y=shannon))+
+    theme_classic()+
+    geom_boxplot()+ 
+    geom_jitter(aes(color=group), width=0.2, size=2)+
+    scale_color_manual(values=c("#f8766d", "#00ba38", "#619cff"))+
+    theme(axis.text.x = element_text(size=14,angle=0),axis.text.y = element_text(size=14)) + 
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + 
+    theme(legend.title = element_text(size=18))+ 
+    theme(legend.text=element_text(size=14)) +
+    theme(title=element_text(size=18))+
+    theme(plot.title = element_text(hjust = 0.5))+
+    labs(y="Shannon-index")+
+    stat_compare_means(comparisons = my_comparisons, ref.group = ".all.", color="black")+
+    theme(legend.position='none')+
+    xlab(NULL)
+
+
+### Figure 2F
+meta <- meta(WGS)
+meta$rpm <- colSums(wgs@otu_table@.Data)
+sample_data(WGS)$rpm <- meta$rpm
+sample_data(WGS)$id <- rownames(meta)
+sub_wgs<- subset_samples(WGS, rpm != 0)
+sub_wgs.p<-  prune_taxa(taxa_sums(sub_wgs) > 0, sub_wgs)
+clr <- compositions::clr(t(sub_wgs.p@otu_table@.Data+0.000000001))
+clr1 <- t(clr)
+clrs <- sub_wgs.p
+clrs@otu_table@.Data <- as.matrix(clr1)
+
+sample_data(clrs)$human <- get_variable(clrs, "id") %in% rownames(metadata1)
+sub_clrs<- subset_samples(clrs, human=="TRUE")
+sample_data(sub_clrs)$group <- metadata1$group
+
+GP.ord <- ordinate(sub_clrs, "PCoA", "bray",  na.rm = TRUE)
+data1<- plot_ordination(sub_clrs, GP.ord, type="samples", color="group")
+data.all <- data1$data
+
+ggscatter(data.all, x= "Axis.1", y = "Axis.2", 
+                color = "group", palette = c("#f8766d", "#00ba38", "#619cff"), 
+                size = 2, alpha = 0.35,
+                ellipse = FALSE, 
+                mean.point = TRUE, 
+                star.plot = FALSE, 
+                ellipse.level = 0.3,
+                ggtheme = theme_minimal()) +
+    scale_shape_manual(values = c( 15, 19, 17, 18, 8))+
+    xlab(data1[["labels"]][["x"]]) + ylab(data1[["labels"]][["y"]])+
+    theme(panel.grid = element_line(color = 'gray', linetype = 2, size = 0.1), panel.background = element_rect(color = 'black', fill = 'transparent'), legend.key = element_rect(fill = 'transparent')) + #去掉背景框
+    geom_vline(xintercept = 0, color = 'gray', size = 0.4) + 
+    geom_hline(yintercept = 0, color = 'gray', size = 0.4) + 
+    theme(axis.text.x = element_text(size=14),axis.text.y = element_text(size=14)) + 
+    labs(title="PCoA based Bray-curtis distances")+
+    theme(plot.title = element_text(hjust = 0.5))+ 
+    theme(legend.title = element_blank(),legend.text = element_text(colour="#4F4F4F", size = 14))
+
+
+per <-  matrix(0, 3, 2)
+rownames(per) <- c("cluster1", "cluster2", "cluster3")
+colnames(per) <- c("R2", "p")
+
+for (i in c("cluster1", "cluster2", "cluster3"))
+   { hnsc <- subset_samples(sub_clrs, group != i)
+    dis_bray <- phyloseq::distance(hnsc , "bray")
+    metas <- meta(hnsc)$group
+    set.seed(001)
+    adon.results<-adonis(dis_bray~metas, perm=999)
+    adon.results
+   per[i,] <- c(adon.results[["aov.tab"]][["R2"]][1], adon.results[["aov.tab"]][["Pr(>F)"]][1])
+}
+
+
+### Figure 2G
+sample_data(WGS)$human <- get_variable(WGS, "id") %in% rownames(metadata1)
+sub_WGS<- subset_samples(WGS, human=="TRUE")
+sample_data(sub_WGS)$group <- metadata1$group
+
+sp = tax_glom(sub_WGS, "species")
+sp<-  prune_taxa(taxa_sums(sp) > 0, sp)
+
+wgs.p <- subset_samples(sp, group != "cluster1")
+#wgs.p <- subset_samples(sp, group != "cluster3")
+sample_data(wgs.p)$group <- factor(sample_data(wgs.p)$group, levels = c("cluster3", "cluster2"))
+#sample_data(wgs.p)$group <- factor(sample_data(wgs.p)$group, levels = c("cluster1", "cluster2"))
+wgs.p <- filter_taxa(wgs.p, function(x) sum(x > 0) > (0.05*length(x)), TRUE)
+tax <- as.data.frame(wgs.p @tax_table@.Data)
+dds <- phyloseq_to_deseq2(wgs.p, ~ group)     
+dge <- as.DGEList(dds)
+dge <- calcNormFactors(dge, method = "TMM")
+head(dge$samples$norm.factors)
+mm <- model.matrix(~ group, dge$samples)
+y <- voom(dge, mm, plot = T)
+fit <- lmFit(y, mm)                                   
+fit <- eBayes(fit)
+head(coef(fit))
+limma_res_df <- data.frame(topTable(fit, number = Inf))    
+rownames(limma_res_df) <- tax[rownames(limma_res_df) ,]$species
+EnhancedVolcano(limma_res_df,
+                      lab = rownames(limma_res_df),
+                      x = 'logFC',
+                      y = 'P.Value',
+                      xlab = bquote(~Log[2]~ 'fold change'),
+                      pCutoff = 0.05,
+                      FCcutoff = 1.0,
+                      pointSize = 3.0,
+                      labSize = 6.0,
+                      colAlpha = 1,
+                      legendPosition = 'right',
+                      legendLabSize = 12,
+                      legendIconSize = 4.0,
+                      drawConnectors = TRUE,
+                      widthConnectors = 0.75)
+
+```
+
